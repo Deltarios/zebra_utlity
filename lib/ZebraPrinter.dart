@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 enum EnumMediaType { Label, BlackMark, Journal }
+
 enum Command { calibrate, mediaType, darkness }
 
 class ZebraPrinter {
@@ -94,6 +97,14 @@ class ZebraPrinter {
     channel.invokeMethod("print", {"Data": data});
   }
 
+  printBarcode(String data) {
+    if (Platform.isAndroid) {
+      channel.invokeMethod("printBarcode", {"Data": data});
+      return;
+    }
+    throw UnsupportedError('Plataform don\'t support barcode yet.');
+  }
+
   disconnect() {
     channel.invokeMethod("disconnect", null);
   }
@@ -122,8 +133,8 @@ class ZebraPrinter {
     } else if (methodCall.method == "onPrinterDiscoveryDone") {
       onPrinterDiscoveryDone!();
     } else if (methodCall.method == "onDiscoveryError") {
-      onDiscoveryError!(methodCall.arguments["ErrorCode"]
-          , methodCall.arguments["ErrorText"]);
+      onDiscoveryError!(
+          methodCall.arguments["ErrorCode"], methodCall.arguments["ErrorText"]);
     }
     return null;
   }
