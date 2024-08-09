@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-enum EnumMediaType { Label, BlackMark, Journal }
+enum EnumMediaType { Label, BlackMark, Journal, Barcode }
 
 enum Command { calibrate, mediaType, darkness }
 
@@ -46,14 +46,21 @@ class ZebraPrinter {
         } else if (values == EnumMediaType.Journal) {
           command = '''
           ! U1 setvar "media.type" "journal"
+          ! U1 setvar "device.languages" "line_print"
+          ''';
+        } else if (values == EnumMediaType.Barcode) {
+          command = '''
+          ! U1 setvar "media.type" "journal"
+          ! U1 setvar "media.sense_mode" "continuous"
+          ! U1 setvar "device.languages" "zpl"
+          ~JC^XA^JUS^XZ
           ''';
         } else if (values == EnumMediaType.Label) {
           command = '''
           ! U1 setvar "media.type" "label"
-           ! U1 setvar "media.sense_mode" "gap"
+          ! U1 setvar "media.sense_mode" "gap"
           ''';
         }
-
         break;
       case Command.calibrate:
         command = '''~jc^xa^jus^xz''';

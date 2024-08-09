@@ -573,21 +573,28 @@ public class Printer implements MethodChannel.MethodCallHandler {
         String settings;
         if (mediaType.equals("Label")) {
             settings = "! U1 setvar \"media.type\" \"label\"\n" +
-                    "             ! U1 setvar \"media.sense_mode\" \"gap\"\n" +
-                   //  "             ! U1 setvar \"device.languages\" \"zpl\"\n" +
+                    "! U1 setvar \"media.sense_mode\" \"gap\"\n" +
+                    "! U1 setvar \"device.languages\" \"zpl\"\n" +
                     //    "             ! U1 setvar \"print.tone\" \"0\"\n" +
-                    "              ~jc^xa^jus^xz";
+                    "^XA^JUF^XZ";
         } else if (mediaType.equals("BlackMark")) {
             settings = "! U1 setvar \"media.type\" \"label\"\n" +
                     "             ! U1 setvar \"media.sense_mode\" \"bar\"\n" +
                     //    "             ! U1 setvar \"print.tone\" \"0\"\n" +
-                    "              ~jc^xa^jus^xz";
-        } else {
+                    "              ~JC^XA^JUS^XZ";
+        } else if (mediaType.equals("Bardcode")) {
             settings = //"! U1 SPEED 4\n" +
-                    "      ! U1 setvar \"print.tone\" \"0\"\n" +
-                            "      ! U1 setvar \"media.type\" \"journal\"\n";
-            //   "      ! U1 setvar \"media.sense_mode\" \"bar\"" +
-            // " ~jc^xa^jus^xz";
+                    "! U1 setvar \"media.type\" \"journal\"\n" +
+                    "! U1 setvar \"media.sense_mode\" \"continuous\"\n" +
+                    "! U1 setvar \"device.languages\" \"zpl\"\n" +
+                    "~JC^XA^JUS^XZ";
+        }
+        else {
+            settings = //"! U1 SPEED 4\n" +
+                    "! U1 setvar \"media.type\" \"journal\"\n" +
+                    "! U1 setvar \"media.sense_mode\" \"continuous\"\n" +
+                    "! U1 setvar \"device.languages\" \"line_print\"\n" +
+                    "~JC^XA^JUS^XZ";
         }
         setSettings(settings);
     }
@@ -608,7 +615,7 @@ public class Printer implements MethodChannel.MethodCallHandler {
             print(call.argument("Data").toString());
         } else if (call.method.equals("printBarcode")) {
             String barcode = call.argument("Data").toString();
-            String zpl = "^XA^FO50,50^BCN,100,Y,N,N^FD"+barcode+"^FS^XZ";
+            String zpl = "^XA^POI^LL200^FO50,50^BCN,100,Y,N,N^FD"+barcode+"^FS^XZ";
             print(zpl);
         } else if (call.method.equals("checkPermission")) {
             checkPermission(context, result);
