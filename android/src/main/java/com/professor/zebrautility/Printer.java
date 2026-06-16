@@ -23,6 +23,7 @@ import com.zebra.sdk.comm.BluetoothConnection;
 import com.zebra.sdk.comm.Connection;
 import com.zebra.sdk.comm.ConnectionException;
 import com.zebra.sdk.comm.TcpConnection;
+import com.zebra.sdk.printer.SGD;
 import com.zebra.sdk.printer.ZebraPrinter;
 import com.zebra.sdk.printer.ZebraPrinterFactory;
 import com.zebra.sdk.printer.ZebraPrinterLanguageUnknownException;
@@ -323,6 +324,25 @@ public class Printer implements MethodChannel.MethodCallHandler {
         }
     }
 
+    /**
+     * Ancho de impresión real del printer en dots (SGD media.print_width).
+     * Permite centrar/ajustar para cualquier modelo (ZQ310 ~384, ZQ320 ~576).
+     * Devuelve -1 si no se puede leer (el caller usa su fallback).
+     */
+    private int getPrintWidthDots() {
+        try {
+            if (printerConnection != null && printerConnection.isConnected()) {
+                String w = SGD.GET("media.print_width", printerConnection);
+                if (w != null && w.trim().length() > 0) {
+                    return Integer.parseInt(w.trim());
+                }
+            }
+        } catch (Exception e) {
+            // Sin width: el caller cae a su comportamiento por defecto.
+        }
+        return -1;
+    }
+
 
     public boolean connectToSelectPrinter(String address) {
         isZebraPrinter = true;
@@ -615,8 +635,47 @@ public class Printer implements MethodChannel.MethodCallHandler {
             print(call.argument("Data").toString());
         } else if (call.method.equals("printBarcode")) {
             String barcode = call.argument("Data").toString();
-            String zpl = "^XA^POI^LL200^FO50,50^BCN,100,Y,N,N^FD"+barcode+"^FS^XZ";
+            int width = getPrintWidthDots();
+            String zpl;
+            if (width > 0) {
+                // ^FB NO centra barcodes (solo texto) — centrado por calculo:
+                // Code128 numerico (subset C): ceil(n/2) codewords de 11 modulos
+                // + ~46 de start/checksum/stop/cambio de subset.
+                // ^BY2 si cabe con margen (40 dots quiet zones); si no, ^BY1.
+                // x = (width - anchoBarcode) / 2; con ^POI el espejo conserva
+                // el centrado.
+                int modules = (int) Math.ceil(barcode.length() / 2.0) * 11 + 46;
+                int by = (modules * 2 + 40 <= width) ? 2 : 1;
+                int bcWidth = modules * by;
+                int x = Math.max(10, (width - bcWidth) / 2);
+                zpl = "^XA^POI^PW" + width + "^LL190^FO" + x + ",40^BY" + by
+                        + "^BCN,100,Y,N,N^FD" + barcode + "^FS^XZ";
+            } else {
+                zpl = "^XA^POI^LL200^FO50,50^BCN,100,Y,N,N^FD" + barcode + "^FS^XZ";
+            }
             print(zpl);
+        } else if (call.method.equals("printCenteredText")) {
+            String text = call.argument("Data").toString();
+            int width = getPrintWidthDots();
+            String zpl;
+            // Soporta varias lineas separadas por \& (salto de linea de ^FB).
+            int lines = text.split(java.util.regex.Pattern.quote("\\&"), -1).length;
+            if (width > 0) {
+                // ^POI: misma orientación que el body. ^CI28 = UTF-8 (acentos).
+                // ^FB centra el texto en el ancho real. ^LL ajustado al numero
+                // de lineas para no alimentar papel de mas.
+                int ll = 20 + 36 * lines;
+                zpl = "^XA^POI^CI28^PW" + width + "^LL" + ll + "^FO0,10^FB" + width
+                        + "," + lines + ",0,C^A0N,28,28^FD" + text + "^FS^XZ";
+            } else {
+                zpl = "^XA^POI^CI28^FO20,15^A0N,28,28^FD" + text + "^FS^XZ";
+            }
+            print(zpl);
+            result.success(true);
+        } else if (call.method.equals("getPrintWidth")) {
+            // Ancho real de impresión en dots (SGD media.print_width).
+            // -1 si no conectado o no se pudo leer.
+            result.success(getPrintWidthDots());
         } else if (call.method.equals("checkPermission")) {
             checkPermission(context, result);
         } else if (call.method.equals("convertBase64ImageToZPLString")) {

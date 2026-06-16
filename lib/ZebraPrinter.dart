@@ -112,6 +112,26 @@ class ZebraPrinter {
     throw UnsupportedError('Plataform don\'t support barcode yet.');
   }
 
+  /// Imprime texto centrado al ancho real de impresión del printer
+  /// (independiente del modelo: ZQ310 ~384, ZQ320 ~576).
+  printCenteredText(String data) {
+    if (Platform.isAndroid) {
+      channel.invokeMethod("printCenteredText", {"Data": data});
+      return;
+    }
+    throw UnsupportedError('Plataform don\'t support centered text yet.');
+  }
+
+  /// Ancho real de impresión en dots (media.print_width).
+  /// ZQ310 ~384, ZQ320 ~576. -1 si no se pudo leer (no conectado, etc).
+  Future<int> getPrintWidth() async {
+    if (Platform.isAndroid) {
+      final int? width = await channel.invokeMethod<int>("getPrintWidth");
+      return width ?? -1;
+    }
+    return -1;
+  }
+
   disconnect() {
     channel.invokeMethod("disconnect", null);
   }
