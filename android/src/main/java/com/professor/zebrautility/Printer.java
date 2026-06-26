@@ -344,6 +344,38 @@ public class Printer implements MethodChannel.MethodCallHandler {
         return -1;
     }
 
+    // Ancho imprimible real (dots @203dpi) segun el modelo. En la ZQ310 (2")
+    // media.print_width a veces reporta el maximo del firmware (no el papel
+    // cargado), lo que pone el ^PW ancho y recorta/descentra. El modelo es fijo
+    // por papel, asi que es la fuente confiable.
+    private int printWidthFromModel() {
+        try {
+            if (printerConnection != null && printerConnection.isConnected()) {
+                String name = SGD.GET("device.product_name", printerConnection);
+                if (name != null) {
+                    String n = name.toUpperCase();
+                    if (n.contains("ZQ310") || n.contains("ZQ311")) return 384; // 2"
+                    if (n.contains("ZQ320") || n.contains("ZQ321")
+                            || n.contains("ZQ330")) return 576; // 3"
+                }
+            }
+        } catch (Exception e) {
+            // Sin modelo: el caller usa media.print_width o su fallback.
+        }
+        return -1;
+    }
+
+    // Ancho a usar para imprimir labels: el del modelo (fijo por papel) tiene
+    // prioridad sobre media.print_width (puede mentir en ZQ310); luego el SGD;
+    // y como ultimo recurso 384 (conservador: mejor angosto que recortar).
+    private int resolvePrintWidthDots() {
+        int byModel = printWidthFromModel();
+        if (byModel > 0) return byModel;
+        int bySgd = getPrintWidthDots();
+        if (bySgd > 0) return bySgd;
+        return 384;
+    }
+
 
     public boolean connectToSelectPrinter(String address) {
         isZebraPrinter = true;
@@ -650,10 +682,10 @@ public class Printer implements MethodChannel.MethodCallHandler {
             // (opción 2). Mismo ZPL probado en campo: ^POI, ^FO20,30, ^BCN,110.
             Object thickArg = call.argument("Thick");
             boolean thick = thickArg != null && (Boolean) thickArg;
-            int by = thick ? 3 : 2;
-            int width = getPrintWidthDots();
-            if (width <= 0) width = 576;
-            String zpl = "^XA^POI^PW" + width + "^LL140^FO20,10^BY" + by
+            int width = resolvePrintWidthDots();
+            // En papel angosto (ZQ310, 2"/384) BY3 no cabe -> se queda en BY2.
+            int by = (thick && width >= 480) ? 3 : 2;
+            String zpl = "^XA^POI^PW" + width + "^LL176^FO20,10^BY" + by
                     + "^BCN,110,Y,N,N^FD" + barcode + "^FS^XZ";
             Log.d("ZebraPrinter",
                     "printBarcode by=" + by + " width=" + width + " zpl=" + zpl);
@@ -661,8 +693,7 @@ public class Printer implements MethodChannel.MethodCallHandler {
         } else if (call.method.equals("printQrCode")) {
             String data = call.argument("Data").toString().trim();
             ensureZplLanguage();
-            int width = getPrintWidthDots();
-            if (width <= 0) width = 576;
+            int width = resolvePrintWidthDots();
             String zpl = "^XA^POI^PW" + width + "^LL180^FO20,30"
                     + "^BQN,2,6^FDLA," + data + "^FS^XZ";
             Log.d("ZebraPrinter", "printQrCode width=" + width + " zpl=" + zpl);
@@ -670,8 +701,7 @@ public class Printer implements MethodChannel.MethodCallHandler {
         } else if (call.method.equals("printCenteredText")) {
             String text = call.argument("Data").toString();
             ensureZplLanguage();
-            int width = getPrintWidthDots();
-            if (width <= 0) width = 576;
+            int width = resolvePrintWidthDots();
             // Varias lineas separadas por \&. Un ^FO por linea (cada una con su
             // propio ^FB centrado): mas confiable que el salto \& dentro de un
             // solo ^FB, que algunos firmwares no respetan.
