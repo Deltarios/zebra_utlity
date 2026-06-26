@@ -16,6 +16,7 @@ import android.location.LocationManager;
 import android.os.Build;
 import android.os.Looper;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 
@@ -619,6 +620,15 @@ public class Printer implements MethodChannel.MethodCallHandler {
         setSettings(settings);
     }
 
+    // Asegura modo ZPL para imprimir labels (^XA..^XZ) sin recalibrar (~JC),
+    // para no alimentar papel de mas. El media (journal/continuous) ya viene
+    // del setMediaType inicial del cuerpo. Lo usan printBarcode/printQrCode/
+    // printCenteredText para auto-gestionar el modo sin que el caller mande
+    // setMediaType(Barcode).
+    private void ensureZplLanguage() {
+        setSettings("! U1 setvar \"device.languages\" \"zpl\"\n");
+    }
+
     private void convertBase64ImageToZPLString(String data, int rotation, MethodChannel.Result result) {
         try {
             byte[] decodedString = Base64.decode(data, Base64.DEFAULT);
@@ -634,43 +644,51 @@ public class Printer implements MethodChannel.MethodCallHandler {
         if (call.method.equals("print")) {
             print(call.argument("Data").toString());
         } else if (call.method.equals("printBarcode")) {
-            String barcode = call.argument("Data").toString();
+            String barcode = call.argument("Data").toString().trim();
+            ensureZplLanguage();
+            // Thick=true -> barras gruesas (BY3, opción 1). Por defecto BY2
+            // (opción 2). Mismo ZPL probado en campo: ^POI, ^FO20,30, ^BCN,110.
+            Object thickArg = call.argument("Thick");
+            boolean thick = thickArg != null && (Boolean) thickArg;
+            int by = thick ? 3 : 2;
             int width = getPrintWidthDots();
-            String zpl;
-            if (width > 0) {
-                // ^FB NO centra barcodes (solo texto) — centrado por calculo:
-                // Code128 numerico (subset C): ceil(n/2) codewords de 11 modulos
-                // + ~46 de start/checksum/stop/cambio de subset.
-                // ^BY2 si cabe con margen (40 dots quiet zones); si no, ^BY1.
-                // x = (width - anchoBarcode) / 2; con ^POI el espejo conserva
-                // el centrado.
-                int modules = (int) Math.ceil(barcode.length() / 2.0) * 11 + 46;
-                int by = (modules * 2 + 40 <= width) ? 2 : 1;
-                int bcWidth = modules * by;
-                int x = Math.max(10, (width - bcWidth) / 2);
-                zpl = "^XA^POI^PW" + width + "^LL190^FO" + x + ",40^BY" + by
-                        + "^BCN,100,Y,N,N^FD" + barcode + "^FS^XZ";
-            } else {
-                zpl = "^XA^POI^LL200^FO50,50^BCN,100,Y,N,N^FD" + barcode + "^FS^XZ";
-            }
+            if (width <= 0) width = 576;
+            String zpl = "^XA^POI^PW" + width + "^LL140^FO20,10^BY" + by
+                    + "^BCN,110,Y,N,N^FD" + barcode + "^FS^XZ";
+            Log.d("ZebraPrinter",
+                    "printBarcode by=" + by + " width=" + width + " zpl=" + zpl);
+            print(zpl);
+        } else if (call.method.equals("printQrCode")) {
+            String data = call.argument("Data").toString().trim();
+            ensureZplLanguage();
+            int width = getPrintWidthDots();
+            if (width <= 0) width = 576;
+            String zpl = "^XA^POI^PW" + width + "^LL180^FO20,30"
+                    + "^BQN,2,6^FDLA," + data + "^FS^XZ";
+            Log.d("ZebraPrinter", "printQrCode width=" + width + " zpl=" + zpl);
             print(zpl);
         } else if (call.method.equals("printCenteredText")) {
             String text = call.argument("Data").toString();
+            ensureZplLanguage();
             int width = getPrintWidthDots();
-            String zpl;
-            // Soporta varias lineas separadas por \& (salto de linea de ^FB).
-            int lines = text.split(java.util.regex.Pattern.quote("\\&"), -1).length;
-            if (width > 0) {
-                // ^POI: misma orientación que el body. ^CI28 = UTF-8 (acentos).
-                // ^FB centra el texto en el ancho real. ^LL ajustado al numero
-                // de lineas para no alimentar papel de mas.
-                int ll = 20 + 36 * lines;
-                zpl = "^XA^POI^CI28^PW" + width + "^LL" + ll + "^FO0,10^FB" + width
-                        + "," + lines + ",0,C^A0N,28,28^FD" + text + "^FS^XZ";
-            } else {
-                zpl = "^XA^POI^CI28^FO20,15^A0N,28,28^FD" + text + "^FS^XZ";
+            if (width <= 0) width = 576;
+            // Varias lineas separadas por \&. Un ^FO por linea (cada una con su
+            // propio ^FB centrado): mas confiable que el salto \& dentro de un
+            // solo ^FB, que algunos firmwares no respetan.
+            String[] parts = text.split(java.util.regex.Pattern.quote("\\&"), -1);
+            int ll = 20 + 36 * parts.length;
+            // ^POI: misma orientación que el body. ^CI28 = UTF-8 (acentos).
+            StringBuilder zpl = new StringBuilder();
+            zpl.append("^XA^POI^CI28^PW").append(width).append("^LL").append(ll);
+            int y = 10;
+            for (String line : parts) {
+                zpl.append("^FO0,").append(y)
+                        .append("^FB").append(width).append(",1,0,C^A0N,28,28^FD")
+                        .append(line).append("^FS");
+                y += 36;
             }
-            print(zpl);
+            zpl.append("^XZ");
+            print(zpl.toString());
             result.success(true);
         } else if (call.method.equals("getPrintWidth")) {
             // Ancho real de impresión en dots (SGD media.print_width).

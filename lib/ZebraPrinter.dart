@@ -104,12 +104,23 @@ class ZebraPrinter {
     channel.invokeMethod("print", {"Data": data});
   }
 
-  printBarcode(String data) {
+  /// Imprime un Code 128 centrado al ancho real del printer.
+  /// [thick] = true usa barras más gruesas (BY3); por defecto BY2.
+  printBarcode(String data, {bool thick = false}) {
     if (Platform.isAndroid) {
-      channel.invokeMethod("printBarcode", {"Data": data});
+      channel.invokeMethod("printBarcode", {"Data": data, "Thick": thick});
       return;
     }
     throw UnsupportedError('Plataform don\'t support barcode yet.');
+  }
+
+  /// Imprime un código QR con el dato dado.
+  printQrCode(String data) {
+    if (Platform.isAndroid) {
+      channel.invokeMethod("printQrCode", {"Data": data});
+      return;
+    }
+    throw UnsupportedError('Plataform don\'t support QR yet.');
   }
 
   /// Imprime texto centrado al ancho real de impresión del printer
