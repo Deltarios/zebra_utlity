@@ -34,7 +34,7 @@ class ZebraPrinter {
     });
   }
 
-  _setSettings(Command setting, dynamic values) {
+  Future<void> _setSettings(Command setting, dynamic values) async {
     String command = "";
     switch (setting) {
       case Command.mediaType:
@@ -75,16 +75,16 @@ class ZebraPrinter {
     }
 
     try {
-      channel.invokeMethod("setSettings", {"SettingCommand": command});
+      await channel.invokeMethod("setSettings", {"SettingCommand": command});
     } on PlatformException catch (e) {}
   }
 
-  setDarkness(int darkness) {
-    _setSettings(Command.darkness, darkness.toString());
+  Future<void> setDarkness(int darkness) {
+    return _setSettings(Command.darkness, darkness.toString());
   }
 
-  setMediaType(EnumMediaType mediaType) {
-    _setSettings(Command.mediaType, mediaType);
+  Future<void> setMediaType(EnumMediaType mediaType) {
+    return _setSettings(Command.mediaType, mediaType);
   }
 
   connectToPrinter(String address) {
@@ -95,20 +95,43 @@ class ZebraPrinter {
     channel.invokeMethod("connectToGenericPrinter", {"Address": address});
   }
 
-  print(String data) {
+  Future<void> print(String data) async {
     if (!data.contains("^PON")) data = data.replaceAll("^XA", "^XA^PON");
 
     if (isRotated) {
       data = data.replaceAll("^PON", "^POI");
     }
-    channel.invokeMethod("print", {"Data": data});
+    await channel.invokeMethod("print", {"Data": data});
   }
 
   /// Imprime un Code 128 centrado al ancho real del printer.
   /// [thick] = true usa barras más gruesas (BY3); por defecto BY2.
-  printBarcode(String data, {bool thick = false}) {
+  Future<void> printBarcode(String data, {bool thick = false}) async {
     if (Platform.isAndroid) {
-      channel.invokeMethod("printBarcode", {"Data": data, "Thick": thick});
+      await channel.invokeMethod("printBarcode", {"Data": data, "Thick": thick});
+      return;
+    }
+    throw UnsupportedError('Plataform don\'t support barcode yet.');
+  }
+
+  /// Imprime el barcode, la copia opcional y el footer como un único label ZPL.
+  /// Al ser una sola trama, el footer no puede colarse antes de renderizar el
+  /// barcode y cortarle la cola (a diferencia de llamadas separadas).
+  /// [footer] son las líneas centradas debajo del barcode; [copyLabel] la línea
+  /// centrada encima (p.ej. "--- COPIA ---").
+  Future<void> printBarcodeWithFooter(
+    String data, {
+    List<String> footer = const [],
+    String? copyLabel,
+    bool thick = false,
+  }) async {
+    if (Platform.isAndroid) {
+      await channel.invokeMethod("printBarcodeWithFooter", {
+        "Barcode": data,
+        "Footer": footer,
+        "CopyLabel": copyLabel,
+        "Thick": thick,
+      });
       return;
     }
     throw UnsupportedError('Plataform don\'t support barcode yet.');
@@ -125,9 +148,9 @@ class ZebraPrinter {
 
   /// Imprime texto centrado al ancho real de impresión del printer
   /// (independiente del modelo: ZQ310 ~384, ZQ320 ~576).
-  printCenteredText(String data) {
+  Future<void> printCenteredText(String data) async {
     if (Platform.isAndroid) {
-      channel.invokeMethod("printCenteredText", {"Data": data});
+      await channel.invokeMethod("printCenteredText", {"Data": data});
       return;
     }
     throw UnsupportedError('Plataform don\'t support centered text yet.');

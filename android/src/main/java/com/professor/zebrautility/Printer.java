@@ -14,6 +14,7 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.location.LocationManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
@@ -34,6 +35,8 @@ import com.zebra.sdk.printer.discovery.NetworkDiscoverer;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.BinaryMessenger;
@@ -61,6 +64,10 @@ public class Printer implements MethodChannel.MethodCallHandler {
     private static int countEndScan = 0;
     private boolean isZebraPrinter = true;
     private Socketmanager socketmanager;
+
+    // Cola serial de escrituras: evita que las tramas ZPL se intercalen en el socket.
+    private final ExecutorService printExecutor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
 
     public Printer(ActivityPluginBinding binding, BinaryMessenger binaryMessenger) {
@@ -256,15 +263,26 @@ public class Printer implements MethodChannel.MethodCallHandler {
 
 
     public void print(final String data) {
-        new Thread(new Runnable() {
+        printAsync(data, null);
+    }
+
+    // Encola la escritura y, si se pasa `result`, lo completa en el hilo
+    // principal al terminar para que Dart pueda await la impresion.
+    private void printAsync(final String data, final MethodChannel.Result result) {
+        printExecutor.execute(new Runnable() {
             public void run() {
-//                enableTestButton(false);
-                Looper.prepare();
+                // El SDK usa un Handler; el hilo del executor necesita Looper.
+                if (Looper.myLooper() == null) Looper.prepare();
                 doConnectionTest(data);
-                Looper.loop();
-                Looper.myLooper().quit();
+                if (result != null) {
+                    mainHandler.post(new Runnable() {
+                        public void run() {
+                            result.success(true);
+                        }
+                    });
+                }
             }
-        }).start();
+        });
     }
 
 
@@ -313,10 +331,11 @@ public class Printer implements MethodChannel.MethodCallHandler {
             byte[] bytes = convertDataToByte(data);
             setStatus(context.getString(R.string.sending_data), context.getString(R.string.connectingColor));
             printerConnection.write(bytes);
-            DemoSleeper.sleep(1500);
+            // Settle para que el printer procese la trama antes de la siguiente.
+            DemoSleeper.sleep(60);
 
             if (printerConnection instanceof BluetoothConnection) {
-                DemoSleeper.sleep(500);
+                DemoSleeper.sleep(40);
             }
             setStatus(context.getResources().getString(R.string.done), context.getString(R.string.connectedColor));
         } catch (ConnectionException e) {
@@ -661,6 +680,14 @@ public class Printer implements MethodChannel.MethodCallHandler {
         setSettings("! U1 setvar \"device.languages\" \"zpl\"\n");
     }
 
+    // Agrega al ZPL una linea de texto centrada al ancho `width` en la
+    // vertical `y` (^FB centra al ancho real, ^CI28 asume UTF-8 en el caller).
+    private void appendCenteredLine(StringBuilder zpl, int width, int y, String text) {
+        zpl.append("^FO0,").append(y)
+                .append("^FB").append(width).append(",1,0,C^A0N,28,28^FD")
+                .append(text).append("^FS");
+    }
+
     private void convertBase64ImageToZPLString(String data, int rotation, MethodChannel.Result result) {
         try {
             byte[] decodedString = Base64.decode(data, Base64.DEFAULT);
@@ -674,7 +701,7 @@ public class Printer implements MethodChannel.MethodCallHandler {
     @Override
     public void onMethodCall(@NonNull final MethodCall call, @NonNull final MethodChannel.Result result) {
         if (call.method.equals("print")) {
-            print(call.argument("Data").toString());
+            printAsync(call.argument("Data").toString(), result);
         } else if (call.method.equals("printBarcode")) {
             String barcode = call.argument("Data").toString().trim();
             ensureZplLanguage();
@@ -689,7 +716,38 @@ public class Printer implements MethodChannel.MethodCallHandler {
                     + "^BCN,110,Y,N,N^FD" + barcode + "^FS^XZ";
             Log.d("ZebraPrinter",
                     "printBarcode by=" + by + " width=" + width + " zpl=" + zpl);
-            print(zpl);
+            printAsync(zpl, result);
+        } else if (call.method.equals("printBarcodeWithFooter")) {
+            // Barcode + copia opcional + footer en un solo label ZPL: al
+            // imprimirse como una sola trama no hay forma de que el footer entre
+            // antes de renderizar el barcode y le corte la cola.
+            String barcode = call.argument("Barcode").toString().trim();
+            String copyLabel = call.argument("CopyLabel");
+            java.util.List<String> footer = call.argument("Footer");
+            Object thickArg = call.argument("Thick");
+            boolean thick = thickArg != null && (Boolean) thickArg;
+            ensureZplLanguage();
+            int width = resolvePrintWidthDots();
+            int by = (thick && width >= 480) ? 3 : 2;
+
+            StringBuilder body = new StringBuilder();
+            int y = 10;
+            if (copyLabel != null && !copyLabel.isEmpty()) {
+                appendCenteredLine(body, width, y, copyLabel);
+                y += 40;
+            }
+            body.append("^FO20,").append(y).append("^BY").append(by)
+                    .append("^BCN,110,Y,N,N^FD").append(barcode).append("^FS");
+            y += 150;
+            if (footer != null) {
+                for (String line : footer) {
+                    appendCenteredLine(body, width, y, line);
+                    y += 36;
+                }
+            }
+            String zpl = "^XA^POI^CI28^PW" + width + "^LL" + (y + 10) + body + "^XZ";
+            Log.d("ZebraPrinter", "printBarcodeWithFooter width=" + width + " zpl=" + zpl);
+            printAsync(zpl, result);
         } else if (call.method.equals("printQrCode")) {
             String data = call.argument("Data").toString().trim();
             ensureZplLanguage();
@@ -697,7 +755,7 @@ public class Printer implements MethodChannel.MethodCallHandler {
             String zpl = "^XA^POI^PW" + width + "^LL180^FO20,30"
                     + "^BQN,2,6^FDLA," + data + "^FS^XZ";
             Log.d("ZebraPrinter", "printQrCode width=" + width + " zpl=" + zpl);
-            print(zpl);
+            printAsync(zpl, result);
         } else if (call.method.equals("printCenteredText")) {
             String text = call.argument("Data").toString();
             ensureZplLanguage();
@@ -712,14 +770,11 @@ public class Printer implements MethodChannel.MethodCallHandler {
             zpl.append("^XA^POI^CI28^PW").append(width).append("^LL").append(ll);
             int y = 10;
             for (String line : parts) {
-                zpl.append("^FO0,").append(y)
-                        .append("^FB").append(width).append(",1,0,C^A0N,28,28^FD")
-                        .append(line).append("^FS");
+                appendCenteredLine(zpl, width, y, line);
                 y += 36;
             }
             zpl.append("^XZ");
-            print(zpl.toString());
-            result.success(true);
+            printAsync(zpl.toString(), result);
         } else if (call.method.equals("getPrintWidth")) {
             // Ancho real de impresión en dots (SGD media.print_width).
             // -1 si no conectado o no se pudo leer.
@@ -751,7 +806,7 @@ public class Printer implements MethodChannel.MethodCallHandler {
             setMediaType(mediaType);
         } else if (call.method.equals("setSettings")) {
             String settingCommand = call.argument("SettingCommand");
-            setSettings(settingCommand);
+            printAsync(settingCommand, result);
         } else if (call.method.equals("setDarkness")) {
             int darkness = call.argument("Darkness");
             setDarkness(darkness);
