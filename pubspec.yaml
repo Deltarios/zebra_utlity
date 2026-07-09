@@ -1,6 +1,6 @@
 name: zebrautility
 description: A flutter plugin for working with zebra printers
-version: 0.0.45
+version: 0.0.46
 homepage:
 repository: https://github.com/MythiCode/zebra_utlity
 environment:
