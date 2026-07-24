@@ -710,8 +710,11 @@ public class Printer implements MethodChannel.MethodCallHandler {
             Object thickArg = call.argument("Thick");
             boolean thick = thickArg != null && (Boolean) thickArg;
             int width = resolvePrintWidthDots();
-            // En papel angosto (ZQ310, 2"/384) BY3 no cabe -> se queda en BY2.
-            int by = (thick && width >= 480) ? 3 : 2;
+            // Module width (^BY) is in absolute dots and does not scale to paper.
+            // On narrow paper (ZQ310, 2"/384) BY2 reaches the printable edge and
+            // long codes get clipped; BY1 halves the width so it fits. Wide paper
+            // (ZQ320, 3"/576) keeps BY2, or BY3 when thick.
+            int by = (thick && width >= 480) ? 3 : (width < 480 ? 1 : 2);
             String zpl = "^XA^POI^PW" + width + "^LL176^FO20,10^BY" + by
                     + "^BCN,110,Y,N,N^FD" + barcode + "^FS^XZ";
             Log.d("ZebraPrinter",
@@ -728,7 +731,8 @@ public class Printer implements MethodChannel.MethodCallHandler {
             boolean thick = thickArg != null && (Boolean) thickArg;
             ensureZplLanguage();
             int width = resolvePrintWidthDots();
-            int by = (thick && width >= 480) ? 3 : 2;
+            // Same as printBarcode: BY1 on narrow paper (<480) to avoid clipping.
+            int by = (thick && width >= 480) ? 3 : (width < 480 ? 1 : 2);
 
             StringBuilder body = new StringBuilder();
             int y = 10;
